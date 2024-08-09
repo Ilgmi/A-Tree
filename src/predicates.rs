@@ -1,12 +1,11 @@
 
 pub mod logical_operations;
 
-use std::cmp::Ordering;
-use std::collections::HashMap;
-use std::hash::{DefaultHasher, Hash, Hasher};
 use crate::predicates::EqOperation::{Equal, NotEqual};
 use crate::predicates::OrdOperation::{Greater, GreaterEqual, Less, LessEqual};
 use crate::predicates::SetOperation::{ElementOf, NotElementOf};
+use std::cmp::Ordering;
+use std::hash::{DefaultHasher, Hash, Hasher};
 
 #[derive(Debug, Copy, Clone)]
 pub struct Double(f64);
@@ -36,21 +35,6 @@ pub enum Value{
     String(String),
     Bool(bool)
 }
-
-
-impl Value {
-    fn eq(&self, other: &Value) -> Option<bool>{
-        match self {
-            Value::Int(val) => {val.eq(other.into())}
-            Value::Double(val) => {val.eq(other.into())}
-            Value::String(val) => {val.eq(other.into())}
-            Value::Bool(val) => {val.eq(other.into())}
-        }
-
-        None
-    }
-}
-
 
 pub trait Predicate {
     fn id(&self) -> u64;
@@ -241,9 +225,9 @@ pub fn between(start: Value, end: Value) -> BetweenPredicate{
 
 #[cfg(test)]
 mod tests{
-    use crate::predicates::{Value::Int};
-    use crate::predicates::Value::Bool;
     use super::*;
+    use crate::predicates::Value::Bool;
+    use crate::predicates::Value::Int;
 
     #[test]
     fn not_equal_evaluation_for_same_value_is_false(){

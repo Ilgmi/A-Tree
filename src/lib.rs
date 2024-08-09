@@ -1,10 +1,11 @@
-use std::cell::{RefCell, RefMut};
+use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
 use std::ops::{Add, Deref, DerefMut};
+use std::process::id;
 use std::sync::Arc;
 
-use crate::LogOperation::{And, Or};
 use crate::predicates::{BetweenPredicate, EqualPredicate, OrdPredicate, Predicate, SetPredicate, Value};
+use crate::LogOperation::{And, Or};
 
 mod predicates;
 
@@ -243,6 +244,8 @@ impl Node for InnerNode{
     fn get_level(&self, level: u32) -> u32 {
         let mut max_level = 0;
         for node in &self.childrens {
+            let t = node.borrow();
+            let id = t.get_level(level+1);
             let level = node.borrow().get_level(level + 1);
             max_level = level.max(max_level);
         }
@@ -469,7 +472,7 @@ fn add_children(node: &mut ArcNodeLink, children: &mut ArcNodeLink){
 
 struct PredResult{
     pub id: u64,
-    pub result: Option<bool>
+    pub result: bool
 }
 
 
@@ -522,14 +525,14 @@ impl ATree{
     pub fn matches(&mut self, predicates: &[PredResult]) -> Vec<u64> {
         let mut queues: HashMap<u32, VecDeque<ArcNodeLink>> = HashMap::new();
         let mut matching_exprs = vec![];
-        let m = self.get_m();
+        let m = self.get_m()+1;
         for i in (1..m){
             queues.insert(i, VecDeque::new());
         }
         for predicate in predicates {
             if let  Some(ref mut node) = self.hash_to_node.get(&predicate.id){
                 if let NodeType::LeafNodeType(ref mut node) = node.borrow_mut().deref_mut() {
-                    node.result = predicate.result;
+                    node.result = Some(predicate.result);
                 }
                 queues.get_mut(&1).unwrap().push_front(node.clone());
             }
@@ -539,17 +542,19 @@ impl ATree{
             while let Some(node) = queues.get_mut(&x).unwrap().pop_front() {
                 let result = node.borrow().evaluate();
                 node.borrow_mut().clean();
+
                 if let None = result {
                     continue;
                 }
 
-                if let Some(parents) = node.borrow_mut().get_parents(){
+                if let Some(parents) = node.borrow().get_parents(){
                     for parent in parents {
+
+                        let level = parent.borrow().get_level(0);
 
                         match parent.borrow_mut().deref_mut() {
                             NodeType::InnerNodeType(p) => {
                                 if p.operands.is_empty() {
-                                    let level = p.get_level(1);
                                     let mut queue = queues.get_mut(&level).unwrap();
                                     queue.push_front(parent.clone());
                                 }
@@ -557,7 +562,7 @@ impl ATree{
                             }
                             NodeType::RootNodeType(p) => {
                                 if p.operands.is_empty() {
-                                    let level = p.get_level(1);
+                                    let level = p.get_level(0);
                                     queues.get_mut(&level).unwrap().push_front(parent.clone());
                                 }
                                 p.operands.push(result);
@@ -571,7 +576,7 @@ impl ATree{
                 }
             }
         }
-        return matching_exprs;
+        matching_exprs
     }
 
     fn create_new_node(&mut self, node: &ArcNodeLink, child_nodes: &mut [ArcNodeLink]) -> ArcNodeLink{
@@ -626,37 +631,34 @@ impl PredicateStore {
         }
     }
 
-    fn add(&mut self, attribute: String, predicate: Box<dyn Predicate>){
+    fn add(&mut self, attribute: String, p: impl Predicate + 'static) -> u64 {
         let predicates = self.predicates.entry(attribute).or_default();
-        predicates.push(predicate);
+        let id = p.id();
+        predicates.push(Box::new(p));
+        id
     }
 
     fn evaluate(&self, event: &Event) -> Vec<PredResult> {
         let mut result = vec![];
-        for value in &event.values {
-            if let Some(predicates) = self.predicates.get(&value.name){
+        for event_value in &event.values {
+            if let Some(predicates) = self.predicates.get(&event_value.name){
                 for predicate in predicates {
-
-                    let predicate_result = PredResult{
+                    result.push(PredResult{
                         id: predicate.id(),
-                        result: Some(false)
-                    };
-                    result.push(predicate_result)
+                        result: predicate.evaluate(&event_value.value)
+                    })
                 }
             }
         }
         result
     }
-
-
-
-
 }
 
 #[cfg(test)]
 mod tests{
-    use crate::predicates::Value::Int;
+    use std::collections::HashSet;
     use super::*;
+    use crate::predicates::Value::Int;
 
     #[test]
     fn calculate_level_for_three_nodes(){
@@ -848,15 +850,17 @@ mod tests{
 
     #[test]
     fn test_match(){
+        let mut pm = PredicateStore::new();
+        let mut expressions = HashSet::new();
         let mut tree = ATree::new();
 
-        let eq = predicates::equal(Int(10));
-        let gt = predicates::greater(Int(5));
-
         {
+            let eq_id = pm.add("A1".to_string(), predicates::equal(Int(10)));
+            let gt_id = pm.add("A1".to_string(), predicates::greater(Int(5)));
 
-            let mut leaf = NodeType::new_leaf(LeafNode::new(eq.id()));
-            let mut leaf_two = NodeType::new_leaf(LeafNode::new(gt.id()));
+
+            let mut leaf = NodeType::new_leaf(LeafNode::new(eq_id));
+            let mut leaf_two = NodeType::new_leaf(LeafNode::new(gt_id));
 
             let mut inner = NodeType::new_inner(InnerNode::and());
             add_children(&mut inner, &mut leaf);
@@ -864,14 +868,26 @@ mod tests{
 
             let mut root = NodeType::new_root(RootNode::and());
             add_children(&mut root,&mut inner);
+            expressions.insert(root.borrow().get_id());
 
             tree.insert(root.clone());
         }
 
+        let event = Event{
+            values: vec![
+                EventValue{
+                    name: "A1".to_string(), value: Int(32)
+                },
+            ]
+        };
 
+        let pv = pm.evaluate(&event);
 
+        let matches = tree.matches(&pv);
 
-
+        for m in &matches {
+            assert!(matches.contains(m))
+        }
     }
 
 }
