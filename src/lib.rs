@@ -1,22 +1,12 @@
 use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
 use std::ops::{Add, Deref, DerefMut};
-use std::process::id;
 use std::sync::Arc;
 
-use crate::predicates::{BetweenPredicate, EqualPredicate, OrdPredicate, Predicate, SetPredicate, Value};
+use crate::predicates::{Predicate, Value};
 use crate::LogOperation::{And, Or};
 
 mod predicates;
-
-
-
-enum Predicates{
-    OrdPredicate(OrdPredicate),
-    EqualPredicate(EqualPredicate),
-    SetPredicate(SetPredicate),
-    BetweenPredicate(BetweenPredicate),
-}
 
 #[derive(Debug, Clone)]
 enum NodeType {
@@ -244,8 +234,6 @@ impl Node for InnerNode{
     fn get_level(&self, level: u32) -> u32 {
         let mut max_level = 0;
         for node in &self.childrens {
-            let t = node.borrow();
-            let id = t.get_level(level+1);
             let level = node.borrow().get_level(level + 1);
             max_level = level.max(max_level);
         }
@@ -526,7 +514,7 @@ impl ATree{
         let mut queues: HashMap<u32, VecDeque<ArcNodeLink>> = HashMap::new();
         let mut matching_exprs = vec![];
         let m = self.get_m()+1;
-        for i in (1..m){
+        for i in 1..m {
             queues.insert(i, VecDeque::new());
         }
         for predicate in predicates {
@@ -538,7 +526,7 @@ impl ATree{
             }
         }
 
-        for x in (1..m) {
+        for x in 1..m {
             while let Some(node) = queues.get_mut(&x).unwrap().pop_front() {
                 let result = node.borrow().evaluate();
                 node.borrow_mut().clean();
@@ -555,7 +543,7 @@ impl ATree{
                         match parent.borrow_mut().deref_mut() {
                             NodeType::InnerNodeType(p) => {
                                 if p.operands.is_empty() {
-                                    let mut queue = queues.get_mut(&level).unwrap();
+                                    let queue = queues.get_mut(&level).unwrap();
                                     queue.push_front(parent.clone());
                                 }
                                 p.operands.push(result);
@@ -656,9 +644,9 @@ impl PredicateStore {
 
 #[cfg(test)]
 mod tests{
-    use std::collections::HashSet;
     use super::*;
     use crate::predicates::Value::Int;
+    use std::collections::HashSet;
 
     #[test]
     fn calculate_level_for_three_nodes(){
@@ -670,7 +658,6 @@ mod tests{
         let mut root = NodeType::new_root(RootNode::and());
         add_children(&mut root, &mut inner);
 
-        let c = root.borrow().get_children().unwrap();
 
         assert_eq!(root.borrow().get_level(0), 3);
     }
@@ -691,9 +678,6 @@ mod tests{
 
         let mut root = NodeType::new_root(RootNode::and());
         add_children(&mut root, &mut inner);
-
-
-        let c = root.borrow().get_children().unwrap();
 
         assert_eq!(root.borrow().get_level(0), 4);
 
