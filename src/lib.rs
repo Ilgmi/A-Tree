@@ -460,7 +460,7 @@ fn add_children(node: &mut ArcNodeLink, children: &mut ArcNodeLink){
 
 struct PredResult{
     pub id: u64,
-    pub result: bool
+    pub result: Option<bool>
 }
 
 
@@ -520,7 +520,7 @@ impl ATree{
         for predicate in predicates {
             if let  Some(ref mut node) = self.hash_to_node.get(&predicate.id){
                 if let NodeType::LeafNodeType(ref mut node) = node.borrow_mut().deref_mut() {
-                    node.result = Some(predicate.result);
+                    node.result = predicate.result;
                 }
                 queues.get_mut(&1).unwrap().push_front(node.clone());
             }
@@ -628,12 +628,20 @@ impl PredicateStore {
 
     fn evaluate(&self, event: &Event) -> Vec<PredResult> {
         let mut result = vec![];
-        for event_value in &event.values {
-            if let Some(predicates) = self.predicates.get(&event_value.name){
-                for predicate in predicates {
+        for x in &self.predicates {
+            let event = event.values.iter().find(|&f| { f.name.eq(x.0) });
+            if let Some(event) = event {
+                for predicate in x.1 {
                     result.push(PredResult{
                         id: predicate.id(),
-                        result: predicate.evaluate(&event_value.value)
+                        result: Some(predicate.evaluate(&event.value))
+                    })
+                }
+            }else{
+                for predicate in x.1 {
+                    result.push(PredResult{
+                        id: predicate.id(),
+                        result: None
                     })
                 }
             }
