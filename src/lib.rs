@@ -1,5 +1,5 @@
 use std::cell::RefCell;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::ops::{Add, Deref, DerefMut};
 use std::sync::Arc;
 
@@ -306,7 +306,9 @@ impl Node for InnerNode{
 struct RootNode{
     childrens: Vec<ArcNodeLink>,
     pub log_operation: LogOperation,
-    pub operands: Vec<Option<bool>>
+    pub operands: Vec<Option<bool>>,
+    pub ids: HashSet<String>,
+    pub id: String,
 }
 
 struct RootNodeBuilder{
@@ -315,15 +317,16 @@ struct RootNodeBuilder{
 
 impl RootNodeBuilder{
 
-    fn and() -> Self{
+
+    fn and(id: String) -> Self{
         Self{
-            node: Arc::new(RefCell::new(NodeType::RootNodeType(RootNode::new(And))))
+            node: Arc::new(RefCell::new(NodeType::RootNodeType(RootNode::new(id, And))))
         }
     }
 
-    fn or() -> Self{
+    fn or(id: String,) -> Self{
         Self{
-            node: Arc::new(RefCell::new(NodeType::RootNodeType(RootNode::new(Or))))
+            node: Arc::new(RefCell::new(NodeType::RootNodeType(RootNode::new(id, Or))))
         }
     }
 
@@ -343,27 +346,39 @@ impl RootNodeBuilder{
 }
 
 impl RootNode{
-    fn new(log_operation: LogOperation) -> Self{
+    fn new(id: String, log_operation: LogOperation) -> Self{
+        let mut ids = HashSet::new();
+        ids.insert(id.clone());
         Self{
             log_operation,
             childrens: vec![],
-            operands: vec![]
+            operands: vec![],
+            ids,
+            id
         }
     }
 
-    fn and() -> Self {
+    fn and(id: String) -> Self {
+        let mut ids = HashSet::new();
+        ids.insert(id.clone());
         Self{
             log_operation: And,
             childrens: vec![],
-            operands: vec![]
+            operands: vec![],
+            ids,
+            id,
         }
     }
 
-    fn or() -> Self {
+    fn or(id: String) -> Self {
+        let mut ids = HashSet::new();
+        ids.insert(id.clone());
         Self{
             log_operation: Or,
             childrens: vec![],
-            operands: vec![]
+            operands: vec![],
+            ids,
+            id
         }
     }
 
@@ -485,7 +500,14 @@ impl ATree{
     pub fn insert(&mut self, node: ArcNodeLink) -> ArcNodeLink{
         let id = node.borrow().get_id();
         if let Some(node) = self.hash_to_node.get(&id) {
-            return node.clone()
+            match (node.borrow().deref(), node.borrow_mut().deref_mut()) {
+                (NodeType::RootNodeType(n1), NodeType::RootNodeType(n2)) => {
+                    n2.ids.insert(n1.id.clone());
+                }
+                _ => {}
+            }
+
+            node.clone()
         }else{
             let mut child_nodes = vec![];
             if let Some(childrens) =  node.borrow_mut().get_children(){
@@ -497,7 +519,8 @@ impl ATree{
 
             let new_node: ArcNodeLink = self.create_new_node(&node, child_nodes.as_mut_slice());
             self.hash_to_node.insert(new_node.borrow().get_id(), new_node.clone());
-            return new_node
+
+            new_node
         }
     }
 
@@ -510,9 +533,9 @@ impl ATree{
         max
     }
 
-    pub fn matches(&mut self, predicates: &[PredResult]) -> Vec<u64> {
+    pub fn matches(&mut self, predicates: &[PredResult]) -> HashSet<String> {
         let mut queues: HashMap<u32, VecDeque<ArcNodeLink>> = HashMap::new();
-        let mut matching_exprs = vec![];
+        let mut matching_ids = HashSet::new();
         let m = self.get_m()+1;
         for i in 1..m {
             queues.insert(i, VecDeque::new());
@@ -558,13 +581,25 @@ impl ATree{
                             _ => {}
                         }
                     }
-                    if let Some(true) = result{
-                        matching_exprs.push(node.borrow().get_id())
+
+                }
+
+                if let Some(true) = result{
+
+                    match node.borrow().deref() {
+                        NodeType::RootNodeType(n) => {
+                            for id in &n.ids {
+                                matching_ids.insert(id.clone());
+                            }
+                        }
+                        _ => {}
                     }
+
                 }
             }
         }
-        matching_exprs
+
+        matching_ids
     }
 
     fn create_new_node(&mut self, node: &ArcNodeLink, child_nodes: &mut [ArcNodeLink]) -> ArcNodeLink{
@@ -586,7 +621,7 @@ impl ATree{
                 inner
             }
             NodeType::RootNodeType(n) => {
-                let mut root = NodeType::new_root(RootNode::new(n.log_operation.clone()));
+                let mut root = NodeType::new_root(RootNode::new(n.id.clone(), n.log_operation.clone()));
                 for mut node in child_nodes {
                     add_children(&mut root, &mut node)
                 }
@@ -637,13 +672,6 @@ impl PredicateStore {
                         result: Some(predicate.evaluate(&event.value))
                     })
                 }
-            }else{
-                for predicate in x.1 {
-                    result.push(PredResult{
-                        id: predicate.id(),
-                        result: None
-                    })
-                }
             }
         }
         result
@@ -663,7 +691,7 @@ mod tests{
         let mut inner = NodeType::new_inner(InnerNode::and());
         add_children(&mut inner, &mut leaf);
 
-        let mut root = NodeType::new_root(RootNode::and());
+        let mut root = NodeType::new_root(RootNode::and("1".to_string()));
         add_children(&mut root, &mut inner);
 
 
@@ -684,7 +712,7 @@ mod tests{
 
         add_children(&mut inner, &mut inner_two);
 
-        let mut root = NodeType::new_root(RootNode::and());
+        let mut root = NodeType::new_root(RootNode::and("1".to_string()));
         add_children(&mut root, &mut inner);
 
         assert_eq!(root.borrow().get_level(0), 4);
@@ -700,7 +728,7 @@ mod tests{
             let mut inner = NodeType::new_inner(InnerNode::and());
             add_children(&mut inner, &mut leaf);
 
-            let mut root = NodeType::new_root(RootNode::and());
+            let mut root = NodeType::new_root(RootNode::and("1".to_string()));
             add_children(&mut root, &mut inner);
 
             tree.insert(root.clone());
@@ -716,7 +744,7 @@ mod tests{
             let mut leaf = NodeType::new_leaf(LeafNode::new(1));
             let mut leaf_two = NodeType::new_leaf(LeafNode::new(2));
 
-            let mut root = NodeType::new_root(RootNode::and());
+            let mut root = NodeType::new_root(RootNode::and("1".to_string()));
             add_children(&mut root, &mut leaf);
             add_children(&mut root, &mut leaf_two);
 
@@ -738,7 +766,7 @@ mod tests{
             add_children(&mut inner, &mut leaf);
             add_children(&mut inner, &mut leaf_two);
 
-            let mut root = NodeType::new_root(RootNode::and());
+            let mut root = NodeType::new_root(RootNode::and("1".to_string()));
             add_children(&mut root,&mut inner);
 
             tree.insert(root.clone());
@@ -752,7 +780,7 @@ mod tests{
             add_children(&mut inner, &mut leaf);
             add_children(&mut inner, &mut leaf_two);
 
-            let mut root = NodeType::new_root(RootNode::and());
+            let mut root = NodeType::new_root(RootNode::and("1".to_string()));
             add_children(&mut root,&mut inner);
 
             tree.insert(root.clone());
@@ -773,7 +801,7 @@ mod tests{
             add_children(&mut inner, &mut leaf);
             add_children(&mut inner, &mut leaf_two);
 
-            let mut root = NodeType::new_root(RootNode::and());
+            let mut root = NodeType::new_root(RootNode::and("1".to_string()));
             add_children(&mut root,&mut inner);
 
             tree.insert(root.clone());
@@ -787,7 +815,7 @@ mod tests{
             add_children(&mut inner, &mut leaf);
             add_children(&mut inner, &mut leaf_two);
 
-            let mut root = NodeType::new_root(RootNode::and());
+            let mut root = NodeType::new_root(RootNode::and("1".to_string()));
             add_children(&mut root,&mut inner);
 
             tree.insert(root.clone());
@@ -828,7 +856,7 @@ mod tests{
             add_children(&mut root_inner_2, &mut root_inner_2_inner_2);
 
 
-            let mut root = NodeType::new_root(RootNode::and());
+            let mut root = NodeType::new_root(RootNode::and("1".to_string()));
             add_children(&mut root,&mut root_inner_1);
             add_children(&mut root,&mut root_inner_2);
 
@@ -854,12 +882,10 @@ mod tests{
             let mut leaf = NodeType::new_leaf(LeafNode::new(eq_id));
             let mut leaf_two = NodeType::new_leaf(LeafNode::new(gt_id));
 
-            let mut inner = NodeType::new_inner(InnerNode::and());
-            add_children(&mut inner, &mut leaf);
-            add_children(&mut inner, &mut leaf_two);
+            let mut root = NodeType::new_root(RootNode::and("1".to_string()));
+            add_children(&mut root,&mut leaf);
+            add_children(&mut root,&mut leaf_two);
 
-            let mut root = NodeType::new_root(RootNode::and());
-            add_children(&mut root,&mut inner);
             expressions.insert(root.borrow().get_id());
 
             tree.insert(root.clone());
@@ -868,7 +894,7 @@ mod tests{
         let event = Event{
             values: vec![
                 EventValue{
-                    name: "A1".to_string(), value: Int(32)
+                    name: "A1".to_string(), value: Int(10)
                 },
             ]
         };
